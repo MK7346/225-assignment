@@ -210,17 +210,98 @@ int create_file(const char *filename, int parent_inode_index) {
     return inode_index;
 }
 
+// for writting to a file
+int write_file(int inode_index, const char *data, int size){
+    struct inode *file_inode= &inode_table[inode_index];
+    int block_needed = (size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    if (block_needed > 15){
+        printf("the file size exceeds maximun limit. \n");
+        return -1;
+    }
 
+    for (int i=0; i <block_needed; i++){
+        int block_index = allocate_block();
+        if (block_index == -1){
+            printf("allocation of file failed. \n");
+            return -1;
+        }
+        file_inode->i_block[i] = block_index;
+        write_block(block_index, (void *)(data + i *BLOCK_SIZE));
+
+    }
+    file_inode->i_size = size;
+    file_inode->i_mtime = time(NULL);
+    file_inode->i_blocks =block_needed;
+    return 0;
+}
+
+// for reading from a file
+int read_file(int inode_index, char *buffer, int size){
+    struct inode *file_inode = &inode_table[inode_index];
+    int block_reading = (size + BLOCK_SIZE -1 ) /BLOCK_SIZE;
+    if (block_reading>file_inode->i_blocks){
+        printf("the size requested exceeds file size. \n");
+        return -1;
+    }
+    for (int i=0; i<block_reading; i++){
+        read_block(file_inode->i_block[i], (void *)(buffer + i *BLOCK_SIZE));
+    }
+    return 0;
+}
+
+// this one is for directory listing 
+void list_directory(int inode_index){
+    struct inode *dir_inode = &inode_table[inode_index];
+    
+    if ((dir_inode->i_mode & 0x4000) == 0){
+        printf("inode %d is not a directory \n",inode_index);
+        return;
+    }
+    struct directory_entry *dir_entries = (struct direrctory_entry *)malloc(BLOCK_SIZE);
+    read_block(dir_inode->i_block[0], dir_entries);
+
+    printf("listing directory inode %d: \n", inode_index);
+    int entry_offset =0;
+    while (entry_offset < BLOCK_SIZE){
+        struct directory_entry *entry = (struct directory_entry *)((char *)dir_entries + entry_offset);
+        if(entry->inode !=0){
+            printf("inode: %d, name: %.*s\n", entry->inode, entry->name_len,entry->name);
+        }
+        entry_offset += entry->rec_len;
+    }
+    free(dir_entries);
+}
 int main()
 {
-    filesystem_initialization();
-    printf("file stuff successful. \n");
+    initialize_filesystem();
+    printf("File system initialized successfully.\n");
+
     // Create a new file in the root directory
     int file_inode_index = create_file("example.txt", 0);
-    if (file_inode_index != -1) {
+    if (file_inode_index >= 0) {
         printf("File 'example.txt' created successfully with inode index %d.\n", file_inode_index);
+        const char *data = "Hello, this is a test file.";
+        int write_status = write_file(file_inode_index, data, strlen(data));
+        if (write_status == 0) {
+            printf("Data written to 'example.txt' successfully.\n");
+        } else if (write_status == 1) {
+            printf("Failed to write data to 'example.txt': Allocation error.\n");
+        } else if (write_status == 2) {
+            printf("Failed to write data to 'example.txt': Size limit error.\n");
+        }
+
+        char buffer[BLOCK_SIZE];
+        int read_status = read_file(file_inode_index, buffer, strlen(data));
+        if (read_status == 0) {
+            printf("Data read from 'example.txt': %s\n", buffer);
+        } else {
+            printf("Failed to read data from 'example.txt'.\n");
+        }
+
+        // List the root directory contents
+        list_directory(0);
     } else {
-        printf("Failed to create file 'example.txt'.\n");
+        printf("Failed to create file 'example.txt'. Error code: %d\n", file_inode_index);
     }
     return 0;
 }
