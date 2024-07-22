@@ -7,7 +7,7 @@
 #define INODE_TABLE_SIZE 128
 #define TOTAL_BLOCKS 1024
 #define TOTAL_INODES 128
-
+#define MAX_JOURNAL_ENTRIES (BLOCK_SIZE /sizeof(struct journal_entry))
 //what is below is the superblock
 struct superblock{
     unsigned int s_inodes_count;
@@ -55,13 +55,42 @@ struct directory_entry {
     char name[255];
 
 };
+//journal entry structure
+struct journal_entry{
+    unsigned int op; //for operation bing done
+    unsigned int inode_index;
+    unsigned int block_index;
+    char data[BLOCK_SIZE];
+
+};
+
 
 //we declare 2 Global Variables for Superblock and Inode Table
 struct superblock sb;
 struct inode *inode_table;
 //the following is for the read adn write operations
 unsigned char disk[TOTAL_BLOCKS][BLOCK_SIZE];
+struct journal_entry journal[MAX_JOURNAL_ENTRIES];
+unsigned int journal_entry_count =0;
 
+//prototype of functions
+void write_block(int block_index, void *data);
+void read_block(int block_index, void *data);
+void initialize_filesystem();
+int allocate_inode();
+void deallocate_inode(int inode_index);
+int allocate_block();
+void deallocate_block(int block_index);
+void create_root_directory();
+int create_file(const char *filename, int parent_inode_index);
+int write_file(int inode_index, const char *data, int size);
+int read_file(int inode_index, char *buffer, int size);
+void list_directory(int inode_index);
+void log_journal_entry(unsigned int op, unsigned int inode_index, unsigned int block_index, const char *data);
+void recover_filesystem();
+void apply_journal_entry(struct journal_entry *entry);
+
+//for write data to a block
 void write_block(int block_index, void *data){
     if(block_index<0 || block_index >= TOTAL_BLOCKS){
         printf("block index is invalid \n");
@@ -69,6 +98,8 @@ void write_block(int block_index, void *data){
     }
     memcpy(disk[block_index],data, BLOCK_SIZE);
 }
+
+//reading data from a block
 void read_block(int block_index, void *data){
     if(block_index<0 || block_index>= TOTAL_BLOCKS){
         printf("block index is invalid \n");
@@ -76,6 +107,7 @@ void read_block(int block_index, void *data){
     }
     memcpy(data, disk[block_index], BLOCK_SIZE);
 }
+
 //initialize the file system
 void filesystem_initialization(){
     //the following initializes the superblock
@@ -198,6 +230,10 @@ int create_file(const char *filename, int parent_inode_index) {
             entry->name_len = strlen(filename);
             entry->file_type = 1; // Regular file
             strcpy(entry->name, filename);
+
+            //log journal the emtry before writing to the disk
+            log_journal_entry(1, inode_index, parent_inode->i_block[0], (const char *)parent_dir);
+
             break;
         }
         entry_offset += entry->rec_len;
@@ -226,6 +262,10 @@ int write_file(int inode_index, const char *data, int size){
             return -1;
         }
         file_inode->i_block[i] = block_index;
+        
+        //log journal entry before writing it to disk
+        log_journal_entry(2, inode_index, block_index, data + i *BLOCK_SIZE);
+
         write_block(block_index, (void *)(data + i *BLOCK_SIZE));
 
     }
@@ -271,6 +311,48 @@ void list_directory(int inode_index){
     }
     free(dir_entries);
 }
+// logging journal entries 
+void log_journal_entry(unsigned int op, unsigned int inode_index, unsigned int block_inex, const char *data){
+    if (journal_entry_count >= MAX_JOURNAL_ENTRIES){
+        printf("journal is full thus it can't log the new entry. \n");
+        return;
+    }
+    struct journal_entry *entry = &journal[journal_entry_count++];
+    entry->op =op;
+    entry->inode_index = inode_index;
+    entry->block_index = block_index;
+    if (data){
+        memcpy(entry->data, data, BLOCK_SIZE);
+    }
+    else{
+        memset(entry->data, 0, BLOCK_SIZE);
+    }
+}
+
+void apply_journal_entry(struct journal_entry *entry){
+    switch (entry->op)
+    {
+    case 1: //create of file
+        // will be added later
+        break;
+    case 2: //for writing 
+        write_block(entry->block_index, entry->data);
+        break;
+    case 3: //delete
+        //latttormregp
+        break;
+    default:
+        printf("unknown journal operation: %u \n", entry->op);
+    }
+}
+// recovery
+void recover_filesystem(){
+    for(unsigned int i =0; i<journal_entry_count; i++){
+        apply_journal_entry(&journal[i]);
+    }
+    journal_entry_count = 0; // for emptying the journal after recover
+}
+
 int main()
 {
     initialize_filesystem();
